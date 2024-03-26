@@ -15,18 +15,37 @@ struct Args {
     calc_rtt : bool
 }
 
-struct RecvData{
-    seq_offset: Vec<u32>,
-    data_len: u32,
-    rx_start_time: u64,
+struct RecvRecord{
+    offset_num : u16,
+    first_recv_time: f64,
+    cha1_recv_delay: f64,
+    cha2_recv_delay: f64,
 }
+
+impl RecvRecord{
+    fn new() -> Self{
+        Self{
+            offset_num: 0,
+            first_recv_time: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64(),
+            cha1_recv_delay: 0.0,
+            cha2_recv_delay: 0.0,
+        }
+    }
+}
+struct RecvData{
+    recv_records: Vec<RecvRecord>,
+    data_len: u32,
+    rx_start_time: f64,
+}
+
+
 
 impl RecvData{
     fn new() -> Self{
         Self{
-            seq_offset: vec![0; 1000000],
+            recv_records: Vec::new(),
             data_len: 0,
-            rx_start_time: 0,
+            rx_start_time: 0.0,
         }
     }
 }
@@ -55,8 +74,8 @@ fn main() {
     std::thread::sleep(std::time::Duration::from_secs(duration as u64));
     let data_len = recv_data.lock().unwrap().data_len;
     println!("Received Bytes: {:.3} MB", data_len as f64/ 1024.0 / 1024.0);
-    let rx_duration = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() - recv_data.lock().unwrap().rx_start_time;
-    println!("Average Throughput: {:.3} Mbps", (data_len  * 8 ) as f64 / rx_duration as f64 / 1e6);
+    let rx_duration = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - recv_data.lock().unwrap().rx_start_time;
+    println!("Average Throughput: {:.3} Mbps", data_len as f64 / rx_duration / 1e6 * 8.0);
 }
 
 fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bool>>){
@@ -77,7 +96,7 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
             println!("Start");
             let mut data = recv_params.lock().unwrap();
             data.data_len += _len as u32;
-            data.rx_start_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            data.rx_start_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
             if !args.calc_rtt {
                 break;
             }
@@ -85,10 +104,10 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
             let seq = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
             let _offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap());
 
-            while data.seq_offset.len() <= seq as usize {
-                data.seq_offset.push(0);
+            while data.recv_records.len() <= seq as usize {
+                data.recv_records.push(RecvRecord::new());
             }
-            data.seq_offset[seq as usize] += 1;
+            data.recv_records[seq as usize].offset_num += 1;
             break;
         }
         else {
@@ -109,20 +128,34 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
             let seq = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
             let _offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap());
             let num = u16::from_le_bytes(buffer[10..12].try_into().unwrap());
-
-            while data.seq_offset.len() <= seq as usize {
-                data.seq_offset.push(0);
+            
+            let indicator = u8::from_le_bytes(buffer[12..13].try_into().unwrap());
+            while data.recv_records.len() <= seq as usize {
+                data.recv_records.push(RecvRecord::new());
             }
-            data.seq_offset[seq as usize] += 1;
-            if data.seq_offset[seq as usize] == num as u32 {
+            if indicator == 10 {
+                data.recv_records[seq as usize].cha1_recv_delay = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - data.recv_records[seq as usize].first_recv_time;
+            }
+            else if indicator == 11 {
+                data.recv_records[seq as usize].cha2_recv_delay = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - data.recv_records[seq as usize].first_recv_time;
+            }
+
+
+            data.recv_records[seq as usize].offset_num += 1;
+            if data.recv_records[seq as usize].offset_num == num {
                 let modified_addr = format!("{}:{}", src_addr.ip(), args.port + PONG_PORT_INC);
-                match pong_socket.send_to(&mut buffer[.._len], &modified_addr) {
-                    Ok(_) => {},
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                        println!("Send operation would block, retrying later...");
-                    }
-                    Err(e) => {
-                        eprintln!("Error sending data: {}", e);
+                buffer[18..26].copy_from_slice(data.recv_records[seq as usize].cha1_recv_delay.to_le_bytes().as_ref());
+                buffer[26..34].copy_from_slice(data.recv_records[seq as usize].cha2_recv_delay.to_le_bytes().as_ref());
+                loop {
+                    match pong_socket.send_to(&mut buffer[.._len], &modified_addr) {
+                        Ok(_) => {break;},
+                        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                            println!("Send operation would block, retrying later...");
+                        }
+                        Err(e) => {
+                            eprintln!("Error sending data: {}", e);
+                            break;
+                        }
                     }
                 }
             }
