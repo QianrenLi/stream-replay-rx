@@ -74,20 +74,21 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
     loop {
         if let Ok((_len, _src_addr)) = socket.recv_from(&mut buffer) {
             *lock.lock().unwrap() = true;
-            
+            println!("Start");
             let mut data = recv_params.lock().unwrap();
             data.data_len += _len as u32;
-
             data.rx_start_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            if !args.calc_rtt {
+                break;
+            }
 
             let seq = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
-            let _offset = u32::from_le_bytes(buffer[4..6].try_into().unwrap());
+            let _offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap());
 
             while data.seq_offset.len() <= seq as usize {
                 data.seq_offset.push(0);
             }
             data.seq_offset[seq as usize] += 1;
-            println!("Start");
             break;
         }
         else {
@@ -100,20 +101,20 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
         if let Ok((_len, src_addr)) = socket.recv_from(&mut buffer) {
             let mut data = recv_params.lock().unwrap();
             data.data_len += _len as u32;
+
             if !args.calc_rtt {
                 continue;
             }
 
             let seq = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
-            let _offset = u32::from_le_bytes(buffer[4..6].try_into().unwrap());
-            let num = u32::from_le_bytes(buffer[6..8].try_into().unwrap());
+            let _offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap());
+            let num = u16::from_le_bytes(buffer[10..12].try_into().unwrap());
 
             while data.seq_offset.len() <= seq as usize {
                 data.seq_offset.push(0);
             }
             data.seq_offset[seq as usize] += 1;
-            
-            if data.seq_offset[seq as usize] == num {
+            if data.seq_offset[seq as usize] == num as u32 {
                 let modified_addr = format!("{}:{}", src_addr.ip(), args.port + PONG_PORT_INC);
                 match pong_socket.send_to(&mut buffer[.._len], &modified_addr) {
                     Ok(_) => {},
