@@ -127,25 +127,18 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
 
             let seq = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
             let _offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap());
-            let num = u16::from_le_bytes(buffer[10..12].try_into().unwrap());
             
             let indicator = u8::from_le_bytes(buffer[12..13].try_into().unwrap());
             while data.recv_records.len() <= seq as usize {
                 data.recv_records.push(RecvRecord::new());
             }
-            if indicator == 10 {
-                data.recv_records[seq as usize].cha1_recv_delay = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - data.recv_records[seq as usize].first_recv_time;
-            }
-            else if indicator == 11 {
-                data.recv_records[seq as usize].cha2_recv_delay = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - data.recv_records[seq as usize].first_recv_time;
-            }
-
 
             data.recv_records[seq as usize].offset_num += 1;
-            if data.recv_records[seq as usize].offset_num == num {
+
+            // if data.recv_records[seq as usize].offset_num == num {
+            if (indicator == 10) || (indicator == 11) {
                 let modified_addr = format!("{}:{}", src_addr.ip(), args.port + PONG_PORT_INC);
-                buffer[18..26].copy_from_slice(data.recv_records[seq as usize].cha1_recv_delay.to_le_bytes().as_ref());
-                buffer[26..34].copy_from_slice(data.recv_records[seq as usize].cha2_recv_delay.to_le_bytes().as_ref());
+                buffer[18..26].copy_from_slice((indicator as f64 ).to_le_bytes().as_ref());
                 loop {
                     match pong_socket.send_to(&mut buffer[.._len], &modified_addr) {
                         Ok(_) => {break;},
