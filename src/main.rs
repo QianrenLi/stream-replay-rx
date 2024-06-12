@@ -17,18 +17,12 @@ struct Args {
 
 struct RecvRecord{
     offset_num : u16,
-    first_recv_time: f64,
-    cha1_recv_delay: f64,
-    cha2_recv_delay: f64,
 }
 
 impl RecvRecord{
     fn new() -> Self{
         Self{
             offset_num: 0,
-            first_recv_time: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64(),
-            cha1_recv_delay: 0.0,
-            cha2_recv_delay: 0.0,
         }
     }
 }
@@ -128,7 +122,7 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
             let seq = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
             let _offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap());
             
-            let indicator = u8::from_le_bytes(buffer[12..13].try_into().unwrap());
+            let indicator = u8::from_le_bytes(buffer[10..11].try_into().unwrap());
             while data.recv_records.len() <= seq as usize {
                 data.recv_records.push(RecvRecord::new());
             }
@@ -136,7 +130,7 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
             data.recv_records[seq as usize].offset_num += 1;
 
             // if data.recv_records[seq as usize].offset_num == num {
-            if (indicator == 10) || (indicator == 11) {
+            if (indicator == 2) || (indicator == 3) {
                 let modified_addr = format!("{}:{}", src_addr.ip(), args.port + PONG_PORT_INC);
                 buffer[18..26].copy_from_slice((indicator as f64 ).to_le_bytes().as_ref());
                 loop {
