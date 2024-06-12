@@ -94,7 +94,6 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
             if !args.calc_rtt {
                 break;
             }
-
             let seq = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
             let _offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap());
 
@@ -132,7 +131,7 @@ fn recv_thread(args: Args, recv_params: Arc<Mutex<RecvData>>, lock: Arc<Mutex<bo
             // if data.recv_records[seq as usize].offset_num == num {
             if (indicator == 2) || (indicator == 3) {
                 let modified_addr = format!("{}:{}", src_addr.ip(), args.port + PONG_PORT_INC);
-                buffer[18..26].copy_from_slice((indicator as f64 ).to_le_bytes().as_ref());
+                buffer[18..19].copy_from_slice((indicator ).to_le_bytes().as_ref());
                 loop {
                     match pong_socket.send_to(&mut buffer[.._len], &modified_addr) {
                         Ok(_) => {break;},
